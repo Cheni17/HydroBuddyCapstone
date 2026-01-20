@@ -90,6 +90,14 @@ class DrainController:
             'pin': self.mosfet_pin
         }
     
+    def close_drain(self):
+        """Close the drain valve"""
+        # TODO: Deactivate MOSFET (turn off drain)
+        # GPIO.output(self.mosfet_pin, GPIO.LOW)
+        
+        self.is_open = False
+        print("Drain closed")
+    
     def cleanup(self):
         """Clean up GPIO resources"""
         self.close_drain()
