@@ -1,118 +1,97 @@
 """
-Alarm Module
-Buzzer and LED control for alerts
+Alarm Actuator Module - HydroBuddy
+Controls the buzzer (PWM) and LED indicator.
+
+Hardware:
+  - Buzzer on GPIO pin 22 (PWM)
+  - LED on GPIO pin 18
+
+Simulation Mode:
+  Set SIMULATION_MODE = True to run without hardware.
+  Alarm actions are printed to the console instead.
 """
 
 import time
-from config import *
+
+# -------------------------------------------------------
+SIMULATION_MODE = True
+# -------------------------------------------------------
+
+if not SIMULATION_MODE:
+    import RPi.GPIO as GPIO
+
+from config import (
+    BUZZER_PIN,
+    LED_PIN,
+    ALARM_FREQUENCY,
+    ALARM_DURATION,
+)
 
 
 class Alarm:
-    """Controls buzzer and LED for alerting"""
-    
+    """
+    Controls the visual (LED) and audio (buzzer) alert system.
+      - trigger_alarm(): Start sounding alarm + turn on LED
+      - off():           Stop alarm + turn off LED
+    """
+
     def __init__(self):
-        """Initialize alarm components"""
-        self.buzzer_pin = BUZZER_PIN
-        self.led_pin = LED_PIN
-        self.is_active = False
-        self._setup_pins()
-    
-    def _setup_pins(self):
-        """Setup GPIO pins for buzzer and LED"""
-        # TODO: Initialize GPIO pins
-        # import RPi.GPIO as GPIO
-        # GPIO.setmode(GPIO.BCM)
-        # GPIO.setup(self.buzzer_pin, GPIO.OUT)
-        # GPIO.setup(self.led_pin, GPIO.OUT)
-        # self.buzzer_pwm = GPIO.PWM(self.buzzer_pin, ALARM_FREQUENCY)
-        pass
-    
-    def sound_buzzer(self, duration=None):
+        self._active = False
+        self._buzzer_pwm = None
+
+        if not SIMULATION_MODE:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(BUZZER_PIN, GPIO.OUT)
+            GPIO.setup(LED_PIN, GPIO.OUT)
+            self._buzzer_pwm = GPIO.PWM(BUZZER_PIN, ALARM_FREQUENCY)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def trigger_alarm(self):
+        """Activate buzzer and LED. Safe to call repeatedly (idempotent)."""
+        if self._active:
+            return
+
+        self._active = True
+
+        if SIMULATION_MODE:
+            print("  [ALARM] 🔔 Buzzer ON  |  💡 LED ON")
+            return
+
+        GPIO.output(LED_PIN, GPIO.HIGH)
+        self._buzzer_pwm.start(50)   # 50% duty cycle
+
+    def beep(self, times: int = 1, interval: float = 0.5):
         """
-        Sound the buzzer
-        
-        Args:
-            duration (float): Duration in seconds (None for continuous)
+        Pulse the alarm a set number of times.
+        Useful for warning beeps before full emergency.
         """
-        # TODO: Activate buzzer
-        # self.buzzer_pwm.start(50)  # 50% duty cycle
-        
-        if duration:
-            time.sleep(duration)
-            self.stop_buzzer()
-        
-        self.is_active = True
-    
-    def stop_buzzer(self):
-        """Stop the buzzer"""
-        # TODO: Deactivate buzzer
-        # self.buzzer_pwm.stop()
-        pass
-    
-    def turn_on_led(self):
-        """Turn on the LED"""
-        # TODO: Turn on LED
-        # GPIO.output(self.led_pin, GPIO.HIGH)
-        pass
-    
-    def turn_off_led(self):
-        """Turn off the LED"""
-        # TODO: Turn off LED
-        # GPIO.output(self.led_pin, GPIO.LOW)
-        pass
-    
-    def flash_led(self, times=3, interval=0.5):
-        """
-        Flash the LED
-        
-        Args:
-            times (int): Number of times to flash
-            interval (float): Interval between flashes in seconds
-        """
-        for _ in range(times):
-            self.turn_on_led()
+        for i in range(times):
+            if SIMULATION_MODE:
+                print(f"  [ALARM] 🔔 Beep {i+1}/{times}")
+            else:
+                GPIO.output(LED_PIN, GPIO.HIGH)
+                self._buzzer_pwm.start(50)
+                time.sleep(ALARM_DURATION)
+                self._buzzer_pwm.stop()
+                GPIO.output(LED_PIN, GPIO.LOW)
             time.sleep(interval)
-            self.turn_off_led()
-            time.sleep(interval)
-    
-    def trigger_alarm(self, duration=None):
-        """
-        Trigger full alarm (buzzer + LED)
-        
-        Args:
-            duration (float): Duration in seconds (None for continuous)
-        """
-        print("⚠️  ALARM TRIGGERED!")
-        self.turn_on_led()
-        self.sound_buzzer(duration)
-        self.is_active = True
-    
-    def alarm_pattern(self, pattern_duration=30):
-        """
-        Run alarm in a pattern (beep + flash)
-        
-        Args:
-            pattern_duration (int): Total duration to run pattern
-        """
-        start_time = time.time()
-        
-        while time.time() - start_time < pattern_duration:
-            self.sound_buzzer(duration=ALARM_DURATION)
-            self.flash_led(times=3, interval=0.3)
-            time.sleep(1)
-        
-        self.off()
-    
+
     def off(self):
-        """Turn off all alarm components"""
-        self.stop_buzzer()
-        self.turn_off_led()
-        self.is_active = False
-        print("Alarm deactivated")
-    
+        """Deactivate buzzer and LED."""
+        self._active = False
+
+        if SIMULATION_MODE:
+            print("  [ALARM] 🔕 Buzzer OFF  |  💡 LED OFF")
+            return
+
+        self._buzzer_pwm.stop()
+        GPIO.output(LED_PIN,  GPIO.LOW)
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+
     def cleanup(self):
-        """Clean up GPIO resources"""
         self.off()
-        # TODO: Cleanup GPIO
-        # GPIO.cleanup([self.buzzer_pin, self.led_pin])
-        pass
+        if not SIMULATION_MODE:
+            GPIO.cleanup()

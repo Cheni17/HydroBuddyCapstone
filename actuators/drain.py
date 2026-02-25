@@ -1,106 +1,85 @@
 """
-Drain Controller Module
-MOSFET/Actuator control for emergency drain
+Drain Controller Module - HydroBuddy
+Controls the MOSFET gate to open/close the bathtub drain.
+
+Hardware:
+  - MOSFET gate on GPIO pin 25
+  - HIGH = drain open, LOW = drain closed
+
+Simulation Mode:
+  Set SIMULATION_MODE = True to run without hardware.
+  Drain actions are printed to the console instead.
 """
 
 import time
-from config import *
+
+# -------------------------------------------------------
+SIMULATION_MODE = True
+# -------------------------------------------------------
+
+if not SIMULATION_MODE:
+    import RPi.GPIO as GPIO
+
+from config import DRAIN_MOSFET_PIN, DRAIN_DURATION
 
 
 class DrainController:
-    """Controls drain valve via MOSFET"""
-    
+    """
+    Controls the MOSFET actuator that opens and closes the bathtub drain.
+      - open_drain():  Open the drain (MOSFET gate HIGH)
+      - close_drain(): Close the drain (MOSFET gate LOW)
+      - is_open:       Current drain state
+    """
+
     def __init__(self):
-        """Initialize drain controller"""
-        self.mosfet_pin = DRAIN_MOSFET_PIN
         self.is_open = False
-        self._setup_pin()
-    
-    def _setup_pin(self):
-        """Setup GPIO pin for MOSFET control"""
-        # TODO: Initialize GPIO pin
-        # import RPi.GPIO as GPIO
-        # GPIO.setmode(GPIO.BCM)
-        # GPIO.setup(self.mosfet_pin, GPIO.OUT)
-        # GPIO.output(self.mosfet_pin, GPIO.LOW)  # Start closed
-        pass
-    
+
+        if not SIMULATION_MODE:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(DRAIN_MOSFET_PIN, GPIO.OUT)
+            GPIO.output(DRAIN_MOSFET_PIN, GPIO.LOW)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def open_drain(self):
-        """Open the drain valve"""
-        # TODO: Activate MOSFET (turn on drain)
-        # GPIO.output(self.mosfet_pin, GPIO.HIGH)
-        
+        """Open the drain. Safe to call when already open (idempotent)."""
+        if self.is_open:
+            return
+
         self.is_open = True
-        print("🚰 DRAIN OPENED - Emergency drainage activated")
-    
+
+        if SIMULATION_MODE:
+            print("  [DRAIN] 🚰 Drain OPENED — water draining...")
+            return
+
+        GPIO.output(DRAIN_MOSFET_PIN, GPIO.HIGH)
+
     def close_drain(self):
-        """Close the drain valve"""
-        # TODO: Deactivate MOSFET (turn off drain)
-        # GPIO.output(self.mosfet_pin, GPIO.LOW)
-        
+        """Close the drain. Safe to call when already closed (idempotent)."""
+        if not self.is_open:
+            return
+
         self.is_open = False
-        print("Drain closed")
-    
-    def emergency_drain(self, duration=None):
+
+        if SIMULATION_MODE:
+            print("  [DRAIN] 🔒 Drain CLOSED")
+            return
+
+        GPIO.output(DRAIN_MOSFET_PIN, GPIO.LOW)
+
+    def pulse_drain(self, duration: float = None):
         """
-        Activate emergency drain for specified duration
-        
-        Args:
-            duration (int): Duration in seconds (None uses DRAIN_DURATION)
+        Open drain for a fixed duration, then close it.
+        Uses DRAIN_DURATION from config if no duration specified.
         """
-        if duration is None:
-            duration = DRAIN_DURATION
-        
-        print(f"⚠️  EMERGENCY DRAIN ACTIVATED for {duration} seconds")
+        duration = duration or DRAIN_DURATION
         self.open_drain()
-        
-        # Keep drain open for duration
         time.sleep(duration)
-        
         self.close_drain()
-        print("Emergency drain sequence complete")
-    
-    def pulse_drain(self, pulses=3, on_time=2, off_time=1):
-        """
-        Pulse the drain on/off (for testing or gradual drainage)
-        
-        Args:
-            pulses (int): Number of pulses
-            on_time (float): Time to keep drain open per pulse
-            off_time (float): Time to keep drain closed between pulses
-        """
-        for i in range(pulses):
-            print(f"Pulse {i+1}/{pulses}")
-            self.open_drain()
-            time.sleep(on_time)
-            self.close_drain()
-            
-            if i < pulses - 1:  # Don't wait after last pulse
-                time.sleep(off_time)
-    
-    def get_status(self):
-        """
-        Get current drain status
-        
-        Returns:
-            dict: Status information
-        """
-        return {
-            'is_open': self.is_open,
-            'pin': self.mosfet_pin
-        }
-    
-    def close_drain(self):
-        """Close the drain valve"""
-        # TODO: Deactivate MOSFET (turn off drain)
-        # GPIO.output(self.mosfet_pin, GPIO.LOW)
-        
-        self.is_open = False
-        print("Drain closed")
-    
+
     def cleanup(self):
-        """Clean up GPIO resources"""
         self.close_drain()
-        # TODO: Cleanup GPIO
-        # GPIO.cleanup(self.mosfet_pin)
-        pass
+        if not SIMULATION_MODE:
+            GPIO.cleanup()
