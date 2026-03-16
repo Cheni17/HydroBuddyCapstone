@@ -106,6 +106,20 @@ class DrownDetector:
         if snapshot.distance_cm is not None:
             self._distance_history.append(snapshot.distance_cm)
 
+        # --- Immediate emergency condition ---
+        # If ultrasonic sees an object in water and ToF reports SUBMERGED,
+        # this is a strong drowning signal and escalates immediately.
+        if snapshot.water_present and snapshot.tof_state == "SUBMERGED":
+            self._submersion_start = self._submersion_start or time.time()
+            return DangerAssessment(
+                confidence=1.0,
+                danger_level="CRITICAL",
+                submerged=True,
+                submersion_duration=0.0,
+                indicators=["WATER + SUBMERGED detected"],
+                recommendation="EMERGENCY"
+            )
+
         # --- Early exits for clearly safe states ---
         if not snapshot.water_present or not snapshot.person_present:
             self._reset_submersion()
