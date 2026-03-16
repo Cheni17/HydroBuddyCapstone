@@ -50,9 +50,6 @@ class SensorSnapshot:
     tof_state:      str              # "UPRIGHT" | "SUBMERGED" | "UNKNOWN"
     water_present:  bool             # ultrasonic — object within 40cm
     person_present: bool             # person presence (broad tub occupancy)
-    audio_db:       float            # microphone level
-    motion_state:   str              # "NORMAL" | "ERRATIC" | "STATIC"
-    motion_magnitude: float = 0.0    # raw acceleration magnitude
 
 
 @dataclass
@@ -82,20 +79,11 @@ class DrownDetector:
 
     def __init__(self):
         # Rolling history buffers
-        self._motion_history   = deque(maxlen=MOTION_HISTORY_LEN)
-        self._audio_history    = deque(maxlen=AUDIO_HISTORY_LEN)
         self._distance_history = deque(maxlen=DISTANCE_HISTORY_LEN)
 
         # Submersion tracking
         self._submersion_start: Optional[float] = None
         self._baseline_distance: Optional[float] = None
-
-        # Silence tracking
-        self._silence_start: Optional[float] = None
-
-        # Previous state for trend detection
-        self._prev_motion_states = deque(maxlen=MOTION_HISTORY_LEN)
-        self._prev_audio_dbs     = deque(maxlen=AUDIO_HISTORY_LEN)
 
     # ------------------------------------------------------------------
     # Public API
@@ -115,24 +103,11 @@ class DrownDetector:
         Process a new sensor snapshot and return a danger assessment.
         Call this once per monitoring interval (every ~1 second).
         """
-        # Update history buffers
-        self._motion_history.append(snapshot.motion_state)
-        self._audio_history.append(snapshot.audio_db)
         if snapshot.distance_cm is not None:
             self._distance_history.append(snapshot.distance_cm)
-        self._prev_motion_states.append(snapshot.motion_state)
-        self._prev_audio_dbs.append(snapshot.audio_db)
 
         # --- Early exits for clearly safe states ---
-        if not snapshot.water_present:
-            self._reset_submersion()
-            return DangerAssessment(
-                confidence=0.0, danger_level="SAFE",
-                submerged=False, submersion_duration=0.0,
-                indicators=[], recommendation="MONITOR"
-            )
-
-        if not snapshot.person_present:
+        if not snapshot.water_present or not snapshot.person_present:
             self._reset_submersion()
             return DangerAssessment(
                 confidence=0.0, danger_level="SAFE",
@@ -141,59 +116,26 @@ class DrownDetector:
             )
 
         # --- Submersion detection ---
-        submerged          = self._is_submerged(snapshot.distance_cm, snapshot.tof_state)
+        submerged = self._is_submerged(snapshot.distance_cm, snapshot.tof_state)
         submersion_duration = self._update_submersion_timer(submerged)
 
         # --- Collect danger indicators ---
         indicators = []
         confidence = 0.0
 
-        # 1. Submersion duration (most important indicator)
         if submerged:
             if submersion_duration > SUBMERSION_CRITICAL_TIME:
                 indicators.append(f"SUBMERGED {submersion_duration:.0f}s (CRITICAL)")
-                confidence += 0.5
+                confidence = 1.0
             elif submersion_duration > SUBMERSION_ALERT_TIME:
                 indicators.append(f"SUBMERGED {submersion_duration:.0f}s")
-                confidence += 0.3
-            elif submersion_duration > 5:
-                indicators.append(f"SUBMERGED {submersion_duration:.0f}s (monitoring)")
-                confidence += 0.1
-
-        # 2. Motion analysis — trend matters more than single reading
-        motion_score = self._analyse_motion(snapshot.motion_state)
-        if motion_score > 0:
-            if snapshot.motion_state == "ERRATIC":
-                indicators.append("ERRATIC motion (struggling)")
-                confidence += motion_score * 0.25
-            elif snapshot.motion_state == "STATIC":
-                indicators.append("STATIC motion (no movement)")
-                confidence += motion_score * 0.25
-
-        # 3. Audio analysis — sustained silence is more alarming than instant
-        audio_score = self._analyse_audio(snapshot.audio_db)
-        if audio_score > 0:
-            if snapshot.audio_db >= 60:   # distress threshold
-                indicators.append("DISTRESS audio detected")
-                confidence += audio_score * 0.2
+                confidence = 0.8
             else:
-                indicators.append("SUSTAINED SILENCE detected")
-                confidence += audio_score * 0.2
-
-        # 4. Motion trend — was child active before going still?
-        trend_score = self._analyse_motion_trend()
-        if trend_score > 0:
-            indicators.append("Motion DECLINING (was active, now still)")
-            confidence += trend_score * 0.15
-
-        # 5. Audio trend — did it go quiet suddenly?
-        audio_trend = self._analyse_audio_trend()
-        if audio_trend > 0:
-            indicators.append("Audio DECLINING (sudden silence)")
-            confidence += audio_trend * 0.1
-
-        # Cap confidence at 1.0
-        confidence = min(confidence, 1.0)
+                indicators.append("SUBMERGED (timing)")
+                confidence = 0.4
+        else:
+            indicators.append("UPRIGHT or no object detected")
+            confidence = 0.0
 
         # --- Determine danger level ---
         danger_level = self._classify_danger(
@@ -216,13 +158,8 @@ class DrownDetector:
 
     def reset(self):
         """Reset all history — call when returning to MONITORING state."""
-        self._motion_history.clear()
-        self._audio_history.clear()
         self._distance_history.clear()
-        self._prev_motion_states.clear()
-        self._prev_audio_dbs.clear()
         self._reset_submersion()
-        self._silence_start = None
 
     # ------------------------------------------------------------------
     # Internal analysis methods
@@ -258,105 +195,7 @@ class DrownDetector:
     def _reset_submersion(self):
         self._submersion_start = None
 
-    def _analyse_motion(self, current_state: str) -> float:
-        """
-        Score motion danger 0.0-1.0.
-        STATIC is more dangerous when sustained.
-        ERRATIC is immediately concerning when submerged.
-        """
-        if len(self._motion_history) < 3:
-            return 0.0
-
-        recent = list(self._motion_history)[-5:]
-
-        if current_state == "STATIC":
-            # How long has it been static?
-            static_fraction = sum(1 for s in recent if s == "STATIC") / len(recent)
-            return static_fraction
-
-        elif current_state == "ERRATIC":
-            # Erratic motion while submerged = struggling
-            erratic_fraction = sum(1 for s in recent if s == "ERRATIC") / len(recent)
-            return erratic_fraction * 0.8   # slightly less weight than static
-
-        return 0.0
-
-    def _analyse_audio(self, current_db: float) -> float:
-        """
-        Score audio danger 0.0-1.0.
-        Sustained silence is more alarming than a single quiet reading.
-        High dB (distress) is immediately concerning.
-        """
-        from config import SILENCE_THRESHOLD_DB, AUDIO_THRESHOLD_DB
-
-        if current_db >= AUDIO_THRESHOLD_DB:
-            # Distress sounds — immediate score
-            return 0.8
-
-        if len(self._audio_history) < 3:
-            return 0.0
-
-        recent = list(self._audio_history)[-8:]
-        silence_fraction = sum(
-            1 for db in recent if db <= SILENCE_THRESHOLD_DB
-        ) / len(recent)
-
-        if silence_fraction >= AUDIO_SILENCE_FRACTION:
-            # Track how long silence has been sustained
-            if self._silence_start is None:
-                self._silence_start = time.time()
-            silence_duration = time.time() - self._silence_start
-            # Scale score with duration — longer silence = higher score
-            return min(silence_fraction * (silence_duration / 10.0), 1.0)
-        else:
-            self._silence_start = None
-            return 0.0
-
-    def _analyse_motion_trend(self) -> float:
-        """
-        Detect declining motion trend — child was active, now still.
-        This pattern is more alarming than silence from the start.
-        """
-        if len(self._prev_motion_states) < MOTION_HISTORY_LEN:
-            return 0.0
-
-        states  = list(self._prev_motion_states)
-        first_half  = states[:len(states)//2]
-        second_half = states[len(states)//2:]
-
-        first_active  = sum(1 for s in first_half  if s == "NORMAL") / len(first_half)
-        second_active = sum(1 for s in second_half if s == "NORMAL") / len(second_half)
-
-        # Was active before, now still
-        if first_active > 0.5 and second_active < 0.2:
-            return first_active - second_active   # 0.0-1.0
-
-        return 0.0
-
-    def _analyse_audio_trend(self) -> float:
-        """
-        Detect declining audio trend — was splashing/noisy, now silent.
-        Sudden silence after activity is a key drowning indicator.
-        """
-        if len(self._prev_audio_dbs) < AUDIO_HISTORY_LEN:
-            return 0.0
-
-        from config import SILENCE_THRESHOLD_DB
-
-        dbs         = list(self._prev_audio_dbs)
-        first_half  = dbs[:len(dbs)//2]
-        second_half = dbs[len(dbs)//2:]
-
-        first_avg  = sum(first_half)  / len(first_half)
-        second_avg = sum(second_half) / len(second_half)
-
-        # Was loud before, now quiet
-        if first_avg > SILENCE_THRESHOLD_DB * 1.3 and second_avg <= SILENCE_THRESHOLD_DB:
-            drop = (first_avg - second_avg) / first_avg
-            return min(drop, 1.0)
-
-        return 0.0
-
+    # Motion/audio trend analysis removed for ToF/ultrasonic-only operation.
     def _classify_danger(
         self, confidence: float, submerged: bool, submersion_duration: float
     ) -> str:

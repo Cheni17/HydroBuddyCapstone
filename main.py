@@ -15,8 +15,6 @@ danger confidence from all sensors. The state machine acts on that score.
 import time
 from config import *
 from sensors.distance import DistanceSensor
-from sensors.audio import AudioSensor
-from sensors.motion import MotionDetector
 from sensors.detection import DrownDetector, SensorSnapshot
 from actuators.alarm import Alarm
 from actuators.drain import DrainController
@@ -27,8 +25,6 @@ class HydroBuddyStateMachine:
     def __init__(self):
         # Sensors
         self.distance_sensor = DistanceSensor()
-        self.audio_sensor    = AudioSensor()
-        self.motion_detector = MotionDetector()
 
         # Detection engine
         self.detector = DrownDetector()
@@ -90,7 +86,7 @@ class HydroBuddyStateMachine:
             print("⚠️  Calibration failed — using default thresholds")
 
     def _read_sensors(self) -> SensorSnapshot:
-        """Read all sensors and return a unified snapshot."""
+        """Read ToF + ultrasonic and return a unified snapshot."""
         tof_state = "UNKNOWN"
         if self.distance_sensor.is_upright():
             tof_state = "UPRIGHT"
@@ -103,8 +99,6 @@ class HydroBuddyStateMachine:
             tof_state      = tof_state,
             water_present  = self.distance_sensor.water_detected(),
             person_present = self.distance_sensor.person_detected(),
-            audio_db       = self.audio_sensor.get_db_level(),
-            motion_state   = self.motion_detector.get_motion_state(),
         )
 
     # ------------------------------------------------------------------

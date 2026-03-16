@@ -19,8 +19,29 @@ import random
 SIMULATION_MODE = False
 # -------------------------------------------------------
 
-if not SIMULATION_MODE:
-    import RPi.GPIO as GPIO
+GPIO = None
+serial = None
+board = None
+adafruit_vl53l1x = None
+try:
+    if not SIMULATION_MODE:
+        import RPi.GPIO as GPIO
+except ImportError:
+    GPIO = None
+    SIMULATION_MODE = True
+    print("⚠️  RPi.GPIO not found; forcing simulation mode")
+
+try:
+    import serial
+except ImportError:
+    serial = None
+
+try:
+    import board
+    import adafruit_vl53l1x
+except ImportError:
+    board = None
+    adafruit_vl53l1x = None
 
 from config import (
     TOF_SENSOR_PIN,
@@ -30,6 +51,8 @@ from config import (
     PERSON_PRESENCE_DISTANCE,
     ULTRASONIC_OBJECT_THRESHOLD,
     TOF_UPRIGHT_THRESHOLD,
+    ULTRASONIC_UART_PORT,
+    ULTRASONIC_BAUD_RATE,
 )
 
 
@@ -54,12 +77,21 @@ class DistanceSensor:
         self.sim_resurface_after = 0   # set e.g. to 20 to auto-resurface after 20s
         self._start_time         = time.time()
 
+        self._uart_serial = None
+
         if not SIMULATION_MODE:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(ULTRASONIC_TRIGGER_PIN, GPIO.OUT)
-            GPIO.setup(ULTRASONIC_ECHO_PIN, GPIO.IN)
-            GPIO.output(ULTRASONIC_TRIGGER_PIN, False)
-            time.sleep(0.1)
+            if GPIO is not None:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setup(ULTRASONIC_TRIGGER_PIN, GPIO.OUT)
+                GPIO.setup(ULTRASONIC_ECHO_PIN, GPIO.IN)
+                GPIO.output(ULTRASONIC_TRIGGER_PIN, False)
+                time.sleep(0.1)
+
+            if serial is not None:
+                try:
+                    self._uart_serial = serial.Serial(ULTRASONIC_UART_PORT, ULTRASONIC_BAUD_RATE, timeout=1)
+                except Exception:
+                    self._uart_serial = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,9 +106,9 @@ class DistanceSensor:
 
     def person_detected(self) -> bool:
         """Returns True if a person is thought to be in tub (ultrasonic presence fallback)."""
-        # We keep this as a broad 'someone is here' signal so submersion logic continues
         if SIMULATION_MODE:
             return self.sim_person_present
+        # Person present if ultrasonic sees something within object threshold
         return self.water_detected()
 
     def is_upright(self) -> bool:
@@ -131,39 +163,80 @@ class DistanceSensor:
     # ------------------------------------------------------------------
 
     def _read_ultrasonic(self) -> float:
-        """Trigger ultrasonic pulse and measure echo time → distance in cm."""
+        """Read ultrasonic distance using UART if available, else GPIO pulse."""
+        if self._uart_serial is not None:
+            # UART packet format: 0xFF HIGH LOW CHECKSUM
+            try:
+                self._uart_serial.write(b'\x55')
+                time.sleep(0.1)
+                data = self._uart_serial.read(4)
+                if len(data) == 4 and data[0] == 0xFF:
+                    distance_mm = (data[1] << 8) + data[2]
+                    return round(distance_mm / 10.0, 1)
+            except Exception:
+                pass
+
+        if GPIO is None:
+            return None
+
         GPIO.output(ULTRASONIC_TRIGGER_PIN, True)
         time.sleep(0.00001)
         GPIO.output(ULTRASONIC_TRIGGER_PIN, False)
 
         pulse_start = time.time()
-        pulse_end   = time.time()
+        pulse_end = time.time()
 
         timeout = time.time() + 0.04
         while GPIO.input(ULTRASONIC_ECHO_PIN) == 0:
             pulse_start = time.time()
             if pulse_start > timeout:
-                return 999.0
+                return None
 
         timeout = time.time() + 0.04
         while GPIO.input(ULTRASONIC_ECHO_PIN) == 1:
             pulse_end = time.time()
             if pulse_end > timeout:
-                return 999.0
+                return None
 
         pulse_duration = pulse_end - pulse_start
         distance = pulse_duration * 17150  # speed of sound / 2
         return round(distance, 2)
 
     def _read_tof(self) -> float:
-        """
-        Read from ToF sensor via GPIO.
-        TODO: Replace with VL53L0X library calls when hardware is available.
-              pip install VL53L0X
-        """
-        # Placeholder — implement with your ToF library
-        raise NotImplementedError("ToF sensor library not yet integrated.")
+        """Read from ToF sensor using adafruit VL53L1X interface."""
+        if board is None or adafruit_vl53l1x is None:
+            return None
+
+        try:
+            i2c = board.I2C()
+            sensor = adafruit_vl53l1x.VL53L1X(i2c)
+            sensor.distance_mode = 1
+            sensor.timing_budget = 50
+            sensor.start_ranging()
+
+            timeout = time.time() + 1.0
+            while not sensor.data_ready:
+                time.sleep(0.005)
+                if time.time() > timeout:
+                    sensor.stop_ranging()
+                    return None
+
+            raw_mm = sensor.distance
+            sensor.clear_interrupt()
+            sensor.stop_ranging()
+
+            if raw_mm is None:
+                return None
+            return round(raw_mm / 10.0, 1)
+        except Exception:
+            return None
 
     def cleanup(self):
-        if not SIMULATION_MODE:
+        if self._uart_serial is not None:
+            try:
+                self._uart_serial.close()
+            except Exception:
+                pass
+
+        if not SIMULATION_MODE and GPIO is not None:
             GPIO.cleanup()
