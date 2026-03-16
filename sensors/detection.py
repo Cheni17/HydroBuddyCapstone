@@ -47,10 +47,11 @@ class SensorSnapshot:
     """A single point-in-time reading from all sensors."""
     timestamp:      float
     distance_cm:    Optional[float]   # ToF — person distance
-    water_present:  bool              # ultrasonic — water detected
-    person_present: bool              # ToF — person in tub
-    audio_db:       float             # microphone level
-    motion_state:   str               # "NORMAL" | "ERRATIC" | "STATIC"
+    tof_state:      str              # "UPRIGHT" | "SUBMERGED" | "UNKNOWN"
+    water_present:  bool             # ultrasonic — object within 40cm
+    person_present: bool             # person presence (broad tub occupancy)
+    audio_db:       float            # microphone level
+    motion_state:   str              # "NORMAL" | "ERRATIC" | "STATIC"
     motion_magnitude: float = 0.0    # raw acceleration magnitude
 
 
@@ -140,7 +141,7 @@ class DrownDetector:
             )
 
         # --- Submersion detection ---
-        submerged          = self._is_submerged(snapshot.distance_cm)
+        submerged          = self._is_submerged(snapshot.distance_cm, snapshot.tof_state)
         submersion_duration = self._update_submersion_timer(submerged)
 
         # --- Collect danger indicators ---
@@ -227,23 +228,22 @@ class DrownDetector:
     # Internal analysis methods
     # ------------------------------------------------------------------
 
-    def _is_submerged(self, distance_cm: Optional[float]) -> bool:
+    def _is_submerged(self, distance_cm: Optional[float], tof_state: str) -> bool:
         """
-        Determine if person is submerged using ToF distance.
-        Uses baseline calibration if available for relative threshold.
+        Determine submersion using ToF semantics:
+          - UPRIGHT when something is in front within 40cm
+          - SUBMERGED when nothing is within 40cm
         """
+        if tof_state == "UPRIGHT":
+            return False
+        if tof_state == "SUBMERGED":
+            return True
+
         if distance_cm is None:
             return False
 
-        from config import WATER_LEVEL_THRESHOLD
-        threshold = WATER_LEVEL_THRESHOLD
-
-        # If calibrated, use relative threshold
-        # (baseline - current) > X means something is blocking the sensor
-        if self._baseline_distance is not None:
-            return distance_cm < (self._baseline_distance * 0.3)
-
-        return distance_cm < threshold
+        from config import TOF_UPRIGHT_THRESHOLD
+        return distance_cm >= TOF_UPRIGHT_THRESHOLD
 
     def _update_submersion_timer(self, submerged: bool) -> float:
         """Track how long person has been continuously submerged."""

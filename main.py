@@ -91,9 +91,16 @@ class HydroBuddyStateMachine:
 
     def _read_sensors(self) -> SensorSnapshot:
         """Read all sensors and return a unified snapshot."""
+        tof_state = "UNKNOWN"
+        if self.distance_sensor.is_upright():
+            tof_state = "UPRIGHT"
+        elif self.distance_sensor.is_submerged():
+            tof_state = "SUBMERGED"
+
         return SensorSnapshot(
             timestamp      = time.time(),
             distance_cm    = self.distance_sensor.get_distance(),
+            tof_state      = tof_state,
             water_present  = self.distance_sensor.water_detected(),
             person_present = self.distance_sensor.person_detected(),
             audio_db       = self.audio_sensor.get_db_level(),

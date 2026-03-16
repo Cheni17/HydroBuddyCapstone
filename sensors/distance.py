@@ -16,7 +16,7 @@ import random
 
 # -------------------------------------------------------
 # Toggle this to switch between real hardware and simulation
-SIMULATION_MODE = True
+SIMULATION_MODE = False
 # -------------------------------------------------------
 
 if not SIMULATION_MODE:
@@ -28,6 +28,8 @@ from config import (
     ULTRASONIC_ECHO_PIN,
     WATER_LEVEL_THRESHOLD,
     PERSON_PRESENCE_DISTANCE,
+    ULTRASONIC_OBJECT_THRESHOLD,
+    TOF_UPRIGHT_THRESHOLD,
 )
 
 
@@ -64,21 +66,36 @@ class DistanceSensor:
     # ------------------------------------------------------------------
 
     def water_detected(self) -> bool:
-        """Returns True if water is present in the tub."""
+        """Returns True if an object (water/body) is within ultrasonic range (<=40cm)."""
         if SIMULATION_MODE:
-            return self.sim_water_present
+            return self._sim_ultrasonic_distance() < ULTRASONIC_OBJECT_THRESHOLD
         distance = self._read_ultrasonic()
-        return distance < WATER_LEVEL_THRESHOLD
+        return distance < ULTRASONIC_OBJECT_THRESHOLD
 
     def person_detected(self) -> bool:
-        """Returns True if a person is detected within range."""
+        """Returns True if a person is thought to be in tub (ultrasonic presence fallback)."""
+        # We keep this as a broad 'someone is here' signal so submersion logic continues
         if SIMULATION_MODE:
             return self.sim_person_present
+        return self.water_detected()
+
+    def is_upright(self) -> bool:
+        """Returns True when ToF sees something within 40cm (head/torso above water)."""
+        if SIMULATION_MODE:
+            # Simulation: if person present and not submerged, treat as upright
+            return self.sim_person_present and not self.sim_submerged
         distance = self._read_tof()
-        return distance < PERSON_PRESENCE_DISTANCE
+        return distance < TOF_UPRIGHT_THRESHOLD
+
+    def is_submerged(self) -> bool:
+        """Returns True when ToF does not see object within 40cm (person under water)."""
+        if SIMULATION_MODE:
+            return self.sim_person_present and self.sim_submerged
+        distance = self._read_tof()
+        return distance >= TOF_UPRIGHT_THRESHOLD
 
     def get_distance(self) -> float:
-        """Returns distance in cm to nearest object above the water surface."""
+        """Returns ToF distance in cm (for additional logic and history)."""
         if SIMULATION_MODE:
             return self._sim_get_distance()
         return self._read_tof()
@@ -86,6 +103,12 @@ class DistanceSensor:
     # ------------------------------------------------------------------
     # Simulation helpers
     # ------------------------------------------------------------------
+
+    def _sim_ultrasonic_distance(self) -> float:
+        """Simulated ultrasonic reading in cm."""
+        if self.sim_water_present:
+            return 30.0  # within 40cm, object detected
+        return 80.0
 
     def _sim_get_distance(self) -> float:
         elapsed = time.time() - self._start_time
@@ -95,15 +118,14 @@ class DistanceSensor:
             self.sim_submerged = False
 
         if not self.sim_person_present:
-            return PERSON_PRESENCE_DISTANCE + 10.0   # nobody there
+            return 999.0   # nobody there / nothing within ToF range
 
         if self.sim_submerged:
-            # Small distance = person is below water surface
-            return WATER_LEVEL_THRESHOLD - 2.0 + random.uniform(-0.3, 0.3)
+            # Submerged: nothing within 40cm in front of ToF
+            return 999.0
         else:
-            # Larger distance = person above water
-            return WATER_LEVEL_THRESHOLD + 10.0 + random.uniform(-0.5, 0.5)
-
+            # Upright: object in front within 40cm
+            return 20.0 + random.uniform(-1.0, 1.0)
     # ------------------------------------------------------------------
     # Real hardware helpers
     # ------------------------------------------------------------------

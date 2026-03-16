@@ -15,7 +15,7 @@ import random
 import math
 
 # -------------------------------------------------------
-SIMULATION_MODE = True
+SIMULATION_MODE = False
 # -------------------------------------------------------
 
 if not SIMULATION_MODE:

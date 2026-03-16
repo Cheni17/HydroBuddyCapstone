@@ -32,6 +32,10 @@ DRAIN_MOSFET_PIN = 25
 WATER_LEVEL_THRESHOLD = 5.0  # Water detected if distance < 5cm
 PERSON_PRESENCE_DISTANCE = 50.0  # Person detected within 50cm
 
+# New ultrasound/ToF mode thresholds (per feature request)
+ULTRASONIC_OBJECT_THRESHOLD = 40.0  # Ultrasonic object / water check
+TOF_UPRIGHT_THRESHOLD = 40.0       # ToF sees object in front if <40cm, else submerged
+
 # Audio thresholds
 AUDIO_THRESHOLD_DB = 60  # Sound level indicating activity
 SILENCE_THRESHOLD_DB = 40  # Silence level
