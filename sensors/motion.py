@@ -18,8 +18,15 @@ import math
 SIMULATION_MODE = False
 # -------------------------------------------------------
 
+SMBUS_AVAILABLE = False
 if not SIMULATION_MODE:
-    import smbus2
+    try:
+        import smbus2
+        SMBUS_AVAILABLE = True
+    except ImportError:
+        SMBUS_AVAILABLE = False
+        SIMULATION_MODE = True
+        print("⚠️  smbus2 not found; forcing simulation mode for MotionDetector")
 
 from config import (
     MOTION_SENSOR_I2C_ADDRESS,
@@ -50,11 +57,15 @@ class MotionDetector:
         self._last_motion_time = time.time()
         self._bus = None
 
-        if not SIMULATION_MODE:
-            self._bus = smbus2.SMBus(1)
-            # Wake up the MPU-6050 (it starts in sleep mode)
-            self._bus.write_byte_data(MOTION_SENSOR_I2C_ADDRESS, _PWR_MGMT_1, 0)
-            time.sleep(0.1)
+        if not SIMULATION_MODE and SMBUS_AVAILABLE:
+            try:
+                self._bus = smbus2.SMBus(1)
+                # Wake up the MPU-6050 (it starts in sleep mode)
+                self._bus.write_byte_data(MOTION_SENSOR_I2C_ADDRESS, _PWR_MGMT_1, 0)
+                time.sleep(0.1)
+            except Exception:
+                self._bus = None
+                print("⚠️  Failed to initialize MPU-6050 I2C bus; using sim motion state")
 
     # ------------------------------------------------------------------
     # Public API
@@ -64,10 +75,13 @@ class MotionDetector:
         """
         Returns one of: "ERRATIC", "STATIC", "NORMAL"
         """
-        if SIMULATION_MODE:
+        if SIMULATION_MODE or self._bus is None:
             return self.sim_motion_state
 
         accel = self._read_acceleration()
+        if accel is None:
+            return self.sim_motion_state
+
         magnitude = math.sqrt(accel['x']**2 + accel['y']**2 + accel['z']**2)
 
         # Subtract gravity (1g baseline)
@@ -88,9 +102,13 @@ class MotionDetector:
 
     def get_raw_acceleration(self) -> dict:
         """Returns raw x, y, z acceleration values in g (useful for debugging)."""
-        if SIMULATION_MODE:
+        if SIMULATION_MODE or self._bus is None:
             return self._sim_accel()
-        return self._read_acceleration()
+
+        accel = self._read_acceleration()
+        if accel is None:
+            return self._sim_accel()
+        return accel
 
     # ------------------------------------------------------------------
     # Simulation helpers
@@ -118,6 +136,9 @@ class MotionDetector:
 
     def _read_raw_word(self, high_reg: int) -> int:
         """Read a signed 16-bit value from two consecutive registers."""
+        if self._bus is None:
+            raise RuntimeError("I2C bus not initialized")
+
         high = self._bus.read_byte_data(MOTION_SENSOR_I2C_ADDRESS, high_reg)
         low  = self._bus.read_byte_data(MOTION_SENSOR_I2C_ADDRESS, high_reg + 1)
         value = (high << 8) | low
@@ -127,11 +148,17 @@ class MotionDetector:
 
     def _read_acceleration(self) -> dict:
         """Returns acceleration in g units for x, y, z axes."""
-        return {
-            'x': self._read_raw_word(_ACCEL_XOUT_H)     / _ACCEL_SCALE,
-            'y': self._read_raw_word(_ACCEL_XOUT_H + 2) / _ACCEL_SCALE,
-            'z': self._read_raw_word(_ACCEL_XOUT_H + 4) / _ACCEL_SCALE,
-        }
+        if self._bus is None:
+            return None
+
+        try:
+            return {
+                'x': self._read_raw_word(_ACCEL_XOUT_H)     / _ACCEL_SCALE,
+                'y': self._read_raw_word(_ACCEL_XOUT_H + 2) / _ACCEL_SCALE,
+                'z': self._read_raw_word(_ACCEL_XOUT_H + 4) / _ACCEL_SCALE,
+            }
+        except Exception:
+            return None
 
     def cleanup(self):
         if self._bus:

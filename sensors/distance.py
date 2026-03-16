@@ -2,13 +2,12 @@
 Distance Sensor Module - HydroBuddy
 Handles both ToF and Ultrasonic sensors for water level and person detection.
 
-Hardware: 
-  - ToF sensor on GPIO pin 17
-  - Ultrasonic trigger on GPIO 23, echo on GPIO 24
+Hardware:
+  - ToF sensor on GPIO pin 17 (VL53L1X)
+  - Ultrasonic trigger on GPIO 23, echo on GPIO 24 or UART module
 
 Simulation Mode:
   Set SIMULATION_MODE = True to run without hardware.
-  Tweak the scenario in DistanceSensor.__init__() to test different states.
 """
 
 import time
@@ -66,32 +65,37 @@ class DistanceSensor:
 
     def __init__(self):
         # Simulation scenario controls
-        # Change these to simulate different situations:
-        #   sim_water_present   - is there water in the tub?
-        #   sim_person_present  - is a person in the tub?
-        #   sim_submerged       - is the person below the water surface?
-        #   sim_resurface_after - seconds before person "resurfaces" (0 = never)
         self.sim_water_present   = True
         self.sim_person_present  = True
         self.sim_submerged       = True
-        self.sim_resurface_after = 0   # set e.g. to 20 to auto-resurface after 20s
+        self.sim_resurface_after = 0
         self._start_time         = time.time()
 
         self._uart_serial = None
+        self._tof_sensor  = None
 
-        if not SIMULATION_MODE:
-            if GPIO is not None:
-                GPIO.setmode(GPIO.BCM)
-                GPIO.setup(ULTRASONIC_TRIGGER_PIN, GPIO.OUT)
-                GPIO.setup(ULTRASONIC_ECHO_PIN, GPIO.IN)
-                GPIO.output(ULTRASONIC_TRIGGER_PIN, False)
-                time.sleep(0.1)
+        if not SIMULATION_MODE and GPIO is not None:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(ULTRASONIC_TRIGGER_PIN, GPIO.OUT)
+            GPIO.setup(ULTRASONIC_ECHO_PIN, GPIO.IN)
+            GPIO.output(ULTRASONIC_TRIGGER_PIN, False)
+            time.sleep(0.1)
 
-            if serial is not None:
-                try:
-                    self._uart_serial = serial.Serial(ULTRASONIC_UART_PORT, ULTRASONIC_BAUD_RATE, timeout=1)
-                except Exception:
-                    self._uart_serial = None
+        if not SIMULATION_MODE and serial is not None:
+            try:
+                self._uart_serial = serial.Serial(ULTRASONIC_UART_PORT, ULTRASONIC_BAUD_RATE, timeout=1)
+            except Exception:
+                self._uart_serial = None
+
+        if not SIMULATION_MODE and board is not None and adafruit_vl53l1x is not None:
+            try:
+                i2c = board.I2C()
+                self._tof_sensor = adafruit_vl53l1x.VL53L1X(i2c)
+                self._tof_sensor.distance_mode = 1
+                self._tof_sensor.timing_budget = 50
+                self._tof_sensor.start_ranging()
+            except Exception:
+                self._tof_sensor = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -100,34 +104,36 @@ class DistanceSensor:
     def water_detected(self) -> bool:
         """Returns True if an object (water/body) is within ultrasonic range (<=40cm)."""
         if SIMULATION_MODE:
-            return self._sim_ultrasonic_distance() < ULTRASONIC_OBJECT_THRESHOLD
+            return self.sim_water_present
+
         distance = self._read_ultrasonic()
-        return distance < ULTRASONIC_OBJECT_THRESHOLD
+        return bool(distance is not None and distance < ULTRASONIC_OBJECT_THRESHOLD)
 
     def person_detected(self) -> bool:
-        """Returns True if a person is thought to be in tub (ultrasonic presence fallback)."""
+        """Returns True if a person is detected in the tub."""
         if SIMULATION_MODE:
             return self.sim_person_present
-        # Person present if ultrasonic sees something within object threshold
+
         return self.water_detected()
 
     def is_upright(self) -> bool:
         """Returns True when ToF sees something within 40cm (head/torso above water)."""
         if SIMULATION_MODE:
-            # Simulation: if person present and not submerged, treat as upright
             return self.sim_person_present and not self.sim_submerged
+
         distance = self._read_tof()
-        return distance < TOF_UPRIGHT_THRESHOLD
+        return distance is not None and distance < TOF_UPRIGHT_THRESHOLD
 
     def is_submerged(self) -> bool:
         """Returns True when ToF does not see object within 40cm (person under water)."""
         if SIMULATION_MODE:
             return self.sim_person_present and self.sim_submerged
+
         distance = self._read_tof()
-        return distance >= TOF_UPRIGHT_THRESHOLD
+        return distance is not None and distance >= TOF_UPRIGHT_THRESHOLD
 
     def get_distance(self) -> float:
-        """Returns ToF distance in cm (for additional logic and history)."""
+        """Returns ToF distance in cm (or None if unavailable)."""
         if SIMULATION_MODE:
             return self._sim_get_distance()
         return self._read_tof()
@@ -137,27 +143,23 @@ class DistanceSensor:
     # ------------------------------------------------------------------
 
     def _sim_ultrasonic_distance(self) -> float:
-        """Simulated ultrasonic reading in cm."""
         if self.sim_water_present:
-            return 30.0  # within 40cm, object detected
+            return 30.0
         return 80.0
 
     def _sim_get_distance(self) -> float:
         elapsed = time.time() - self._start_time
 
-        # Auto-resurface after configured delay
         if self.sim_resurface_after > 0 and elapsed > self.sim_resurface_after:
             self.sim_submerged = False
 
         if not self.sim_person_present:
-            return 999.0   # nobody there / nothing within ToF range
+            return None
 
         if self.sim_submerged:
-            # Submerged: nothing within 40cm in front of ToF
             return 999.0
-        else:
-            # Upright: object in front within 40cm
-            return 20.0 + random.uniform(-1.0, 1.0)
+        return 20.0 + random.uniform(-1.0, 1.0)
+
     # ------------------------------------------------------------------
     # Real hardware helpers
     # ------------------------------------------------------------------
