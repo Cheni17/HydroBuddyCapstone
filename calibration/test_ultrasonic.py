@@ -44,10 +44,15 @@ def read_distance(ser) -> float:
             distance_mm = (data[1] << 8) + data[2]
             return round(distance_mm / 10, 1)
         else:
-            # Checksum failed but packet looks valid — return anyway
-            # Some modules don't implement checksum correctly
+            # Bad checksum: print debug to diagnose protocol mismatch
+            print(f"DEBUG: bad checksum, data={data.hex()} expected={checksum:02X} got={data[3]:02X}")
             distance_mm = (data[1] << 8) + data[2]
             return round(distance_mm / 10, 1)
+
+    if data:
+        print(f"DEBUG: invalid packet, len={len(data)} data={data.hex()}")
+    else:
+        print("DEBUG: no data received")
     return None
 
 
