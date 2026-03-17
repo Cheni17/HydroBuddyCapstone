@@ -29,8 +29,8 @@ except ImportError:
 # ----------------------------------------------------------------------------------
 ULTRASONIC_UART_PORT = "/dev/ttyAMA0"
 ULTRASONIC_BAUD_RATE = 9600
-ULTRASONIC_WATER_THRESHOLD = 40.0
-ULTRASONIC_PRESENCE_THRESHOLD = 50.0
+ULTRASONIC_WATER_THRESHOLD = 10.0
+ULTRASONIC_PRESENCE_THRESHOLD = 30.0
 SAMPLE_INTERVAL = 0.5
 ROLLING_WINDOW = 10
 
@@ -40,7 +40,7 @@ ROLLING_WINDOW = 10
 TOF_DISTANCE_MODE   = 1
 TOF_TIMING_BUDGET   = 50
 TOF_UPRIGHT_THRESH  = 40.0
-TOF_SUBMERGED_THRESH = 40.0
+TOF_SUBMERGED_THRESH = 10.0
 
 
 def read_ultrasonic() -> float:
@@ -107,7 +107,7 @@ def read_tof(sensor):
         sensor.clear_interrupt()
         if raw_mm is None:
             return None
-        return round(raw_mm / 10.0, 1)
+        return raw_mm
     except Exception as e:
         print(f"ToF read error: {e}")
         return None
