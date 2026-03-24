@@ -242,3 +242,92 @@ class DistanceSensor:
 
         if not SIMULATION_MODE and GPIO is not None:
             GPIO.cleanup()
+
+
+# ==============================================================================
+# Standalone Functions for Direct Sensor Access
+# ==============================================================================
+# These functions provide a simpler interface for direct sensor reading
+# without the class wrapper. Used by main.py and test scripts.
+# ==============================================================================
+
+# ToF Configuration
+TOF_DISTANCE_MODE = 1
+TOF_TIMING_BUDGET = 50
+
+def init_tof():
+    """
+    Initialize ToF sensor and return sensor object.
+    Returns None if hardware is not available.
+    """
+    if board is None or adafruit_vl53l1x is None:
+        return None
+
+    try:
+        i2c = board.I2C()
+        sensor = adafruit_vl53l1x.VL53L1X(i2c)
+        sensor.distance_mode = TOF_DISTANCE_MODE
+        sensor.timing_budget = TOF_TIMING_BUDGET
+        sensor.start_ranging()
+        return sensor
+    except Exception as e:
+        print(f"ToF init error: {e}")
+        return None
+
+
+def read_tof(sensor):
+    """
+    Read distance from ToF sensor.
+
+    Args:
+        sensor: Initialized VL53L1X sensor object from init_tof()
+
+    Returns:
+        Distance in cm (float) or None if reading fails
+    """
+    if sensor is None:
+        return None
+
+    try:
+        timeout = time.time() + 1.0
+        while not sensor.data_ready:
+            time.sleep(0.005)
+            if time.time() > timeout:
+                return None
+
+        raw_mm = sensor.distance
+        sensor.clear_interrupt()
+        if raw_mm is None:
+            return None
+        return round(raw_mm / 10.0, 1)
+    except Exception as e:
+        print(f"ToF read error: {e}")
+        return None
+
+
+def read_ultrasonic():
+    """
+    Read a 4-byte packet from serial ultrasonic module.
+
+    Returns:
+        Distance in cm (float) or None if reading fails
+    """
+    if serial is None:
+        return None
+
+    try:
+        with serial.Serial(ULTRASONIC_UART_PORT, ULTRASONIC_BAUD_RATE, timeout=1) as ser:
+            ser.write(b'\x55')
+            time.sleep(0.1)
+            data = ser.read(4)
+            if len(data) == 4 and data[0] == 0xFF:
+                checksum = (data[0] + data[1] + data[2]) & 0xFF
+                if checksum != data[3]:
+                    print(f"WARN: bad checksum {checksum:02X} != {data[3]:02X}  data={data.hex()}")
+                distance_mm = (data[1] << 8) + data[2]
+                return round(distance_mm / 10.0, 1)
+            print(f"WARN: invalid packet len={len(data)} data={data.hex()}")
+            return None
+    except Exception as e:
+        print(f"Ultrasonic read error: {e}")
+        return None

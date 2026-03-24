@@ -14,17 +14,19 @@ danger confidence from all sensors. The state machine acts on that score.
 
 import time
 from config import *
-from sensors.distance import DistanceSensor
 from sensors.detection import DrownDetector, SensorSnapshot
 from actuators.alarm import Alarm
 from actuators.drain import DrainController
+
+# Import standalone sensor functions
+from sensors.distance import init_tof, read_tof, read_ultrasonic
 
 
 class HydroBuddyStateMachine:
 
     def __init__(self):
         # Sensors
-        self.distance_sensor = DistanceSensor()
+        self.tof_sensor = init_tof()
 
         # Detection engine
         self.detector = DrownDetector()
@@ -79,26 +81,29 @@ class HydroBuddyStateMachine:
         """
         print("📏 Calibrating... make sure tub is empty")
         time.sleep(2)
-        baseline = self.distance_sensor.get_distance()
-        if baseline < 999.0:
+        baseline = read_tof(self.tof_sensor)
+        if baseline is not None and baseline < 999.0:
             self.detector.calibrate(baseline)
         else:
             print("⚠️  Calibration failed — using default thresholds")
 
     def _read_sensors(self) -> SensorSnapshot:
         """Read ToF + ultrasonic and return a unified snapshot."""
+        tof_distance = read_tof(self.tof_sensor)
         tof_state = "UNKNOWN"
-        if self.distance_sensor.is_upright():
-            tof_state = "UPRIGHT"
-        elif self.distance_sensor.is_submerged():
-            tof_state = "SUBMERGED"
+        if tof_distance is not None:
+            tof_state = "UPRIGHT" if tof_distance < TOF_UPRIGHT_THRESHOLD else "SUBMERGED"
+
+        ultrasonic_distance = read_ultrasonic()
+        water_present = ultrasonic_distance is not None and ultrasonic_distance < ULTRASONIC_OBJECT_THRESHOLD
+        person_present = water_present or (tof_distance is not None and tof_distance < PERSON_PRESENCE_DISTANCE)
 
         return SensorSnapshot(
             timestamp      = time.time(),
-            distance_cm    = self.distance_sensor.get_distance(),
+            distance_cm    = tof_distance,
             tof_state      = tof_state,
-            water_present  = self.distance_sensor.water_detected(),
-            person_present = self.distance_sensor.person_detected(),
+            water_present  = water_present,
+            person_present = person_present,
         )
 
     # ------------------------------------------------------------------
@@ -214,6 +219,13 @@ class HydroBuddyStateMachine:
         print("Cleaning up resources...")
         self.alarm.off()
         self.drain.close_drain()
+
+        if self.tof_sensor is not None:
+            try:
+                self.tof_sensor.stop_ranging()
+            except Exception:
+                pass
+
         print("✓ Cleanup complete")
 
 

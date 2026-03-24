@@ -23,6 +23,20 @@ BUZZER_PIN = 22
 LED_PIN = 18
 DRAIN_MOSFET_PIN = 25
 
+# L298N Motor Controller (for drain valve motor)
+USE_MOTOR_CONTROLLER = False  # Set True to use L298N motor, False for MOSFET
+L298N_ENA = 13      # PWM pin for motor A speed control
+L298N_IN1 = 19      # Motor A direction pin 1
+L298N_IN2 = 26      # Motor A direction pin 2
+L298N_ENB = 6       # PWM pin for motor B speed control (if using second motor)
+L298N_IN3 = 20      # Motor B direction pin 1 (if using second motor)
+L298N_IN4 = 21      # Motor B direction pin 2 (if using second motor)
+
+# Motor drain valve timing
+VALVE_OPEN_DURATION = 3.0   # Seconds to fully open valve
+VALVE_CLOSE_DURATION = 3.0  # Seconds to fully close valve
+VALVE_MOTOR_SPEED = 80      # Motor speed percentage (0-100)
+
 
 # ============================================
 # SENSOR THRESHOLDS

@@ -1,10 +1,16 @@
 """
 Drain Controller Module - HydroBuddy
-Controls the MOSFET gate to open/close the bathtub drain.
+Controls the bathtub drain using either MOSFET or L298N motor controller.
 
-Hardware:
-  - MOSFET gate on GPIO pin 25
-  - HIGH = drain open, LOW = drain closed
+Hardware Options:
+  1. MOSFET Control (USE_MOTOR_CONTROLLER = False):
+     - MOSFET gate on GPIO pin 25
+     - HIGH = drain open, LOW = drain closed
+
+  2. L298N Motor Control (USE_MOTOR_CONTROLLER = True):
+     - DC motor-driven ball valve or gate valve
+     - L298N H-bridge for bidirectional control
+     - Forward = open, Reverse = close
 
 Simulation Mode:
   Set SIMULATION_MODE = True to run without hardware.
@@ -20,24 +26,50 @@ SIMULATION_MODE = True
 if not SIMULATION_MODE:
     import RPi.GPIO as GPIO
 
-from config import DRAIN_MOSFET_PIN, DRAIN_DURATION
+from config import (
+    USE_MOTOR_CONTROLLER,
+    DRAIN_MOSFET_PIN,
+    DRAIN_DURATION,
+    VALVE_OPEN_DURATION,
+    VALVE_CLOSE_DURATION,
+    VALVE_MOTOR_SPEED,
+)
+
+# Import motor controller if needed
+if USE_MOTOR_CONTROLLER:
+    from actuators.motor_controller import DrainValveMotor
 
 
 class DrainController:
     """
-    Controls the MOSFET actuator that opens and closes the bathtub drain.
-      - open_drain():  Open the drain (MOSFET gate HIGH)
-      - close_drain(): Close the drain (MOSFET gate LOW)
+    Controls the bathtub drain actuator (MOSFET or motor-driven valve).
+
+    Methods:
+      - open_drain():  Open the drain
+      - close_drain(): Close the drain
       - is_open:       Current drain state
+
+    The controller automatically uses either MOSFET or motor control
+    based on USE_MOTOR_CONTROLLER setting in config.py.
     """
 
     def __init__(self):
         self.is_open = False
+        self.motor_valve = None
 
-        if not SIMULATION_MODE:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(DRAIN_MOSFET_PIN, GPIO.OUT)
-            GPIO.output(DRAIN_MOSFET_PIN, GPIO.LOW)
+        if USE_MOTOR_CONTROLLER:
+            # Use L298N motor controller for motorized valve
+            self.motor_valve = DrainValveMotor(
+                open_duration=VALVE_OPEN_DURATION,
+                close_duration=VALVE_CLOSE_DURATION,
+                motor_speed=VALVE_MOTOR_SPEED
+            )
+        else:
+            # Use simple MOSFET control
+            if not SIMULATION_MODE:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setup(DRAIN_MOSFET_PIN, GPIO.OUT)
+                GPIO.output(DRAIN_MOSFET_PIN, GPIO.LOW)
 
     # ------------------------------------------------------------------
     # Public API
@@ -50,11 +82,16 @@ class DrainController:
 
         self.is_open = True
 
-        if SIMULATION_MODE:
-            print("  [DRAIN] 🚰 Drain OPENED — water draining...")
-            return
-
-        GPIO.output(DRAIN_MOSFET_PIN, GPIO.HIGH)
+        if USE_MOTOR_CONTROLLER:
+            # Use motor controller to open valve
+            if self.motor_valve is not None:
+                self.motor_valve.open_valve()
+        else:
+            # Use MOSFET control
+            if SIMULATION_MODE:
+                print("  [DRAIN] 🚰 Drain OPENED — water draining...")
+            else:
+                GPIO.output(DRAIN_MOSFET_PIN, GPIO.HIGH)
 
     def close_drain(self):
         """Close the drain. Safe to call when already closed (idempotent)."""
@@ -63,11 +100,16 @@ class DrainController:
 
         self.is_open = False
 
-        if SIMULATION_MODE:
-            print("  [DRAIN] 🔒 Drain CLOSED")
-            return
-
-        GPIO.output(DRAIN_MOSFET_PIN, GPIO.LOW)
+        if USE_MOTOR_CONTROLLER:
+            # Use motor controller to close valve
+            if self.motor_valve is not None:
+                self.motor_valve.close_valve()
+        else:
+            # Use MOSFET control
+            if SIMULATION_MODE:
+                print("  [DRAIN] 🔒 Drain CLOSED")
+            else:
+                GPIO.output(DRAIN_MOSFET_PIN, GPIO.LOW)
 
     def pulse_drain(self, duration: float = None):
         """
@@ -80,6 +122,10 @@ class DrainController:
         self.close_drain()
 
     def cleanup(self):
+        """Clean up GPIO resources and stop motors."""
         self.close_drain()
-        if not SIMULATION_MODE:
+
+        if USE_MOTOR_CONTROLLER and self.motor_valve is not None:
+            self.motor_valve.cleanup()
+        elif not SIMULATION_MODE:
             GPIO.cleanup()
