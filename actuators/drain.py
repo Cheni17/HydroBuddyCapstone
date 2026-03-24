@@ -28,6 +28,7 @@ if not SIMULATION_MODE:
 
 from config import (
     USE_MOTOR_CONTROLLER,
+    RASPBERRY_PI_5,
     DRAIN_MOSFET_PIN,
     DRAIN_DURATION,
     VALVE_OPEN_DURATION,
@@ -35,9 +36,12 @@ from config import (
     VALVE_MOTOR_SPEED,
 )
 
-# Import motor controller if needed
+# Import appropriate motor controller based on Pi model
 if USE_MOTOR_CONTROLLER:
-    from actuators.motor_controller import DrainValveMotor
+    if RASPBERRY_PI_5:
+        from actuators.motor_controller_pi5 import DrainValveMotor
+    else:
+        from actuators.motor_controller import DrainValveMotor
 
 
 class DrainController:

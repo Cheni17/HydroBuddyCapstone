@@ -1,12 +1,14 @@
 """
-L298N Motor Controller Module - HydroBuddy
-Controls DC motors via L298N dual H-bridge motor driver.
+L298N Motor Controller Module - Raspberry Pi 5 Compatible
+==========================================================
+
+This version uses lgpio library which is compatible with Raspberry Pi 5's
+new RP1 GPIO chip. For older Raspberry Pi models, use motor_controller.py.
 
 Hardware:
   - L298N motor driver board
   - ENA: PWM for speed control (Motor A)
   - IN1, IN2: Direction control (Motor A)
-  - ENB, IN3, IN4: Optional second motor (Motor B)
 
 Wiring:
   - Connect motor to Motor A terminals on L298N
@@ -24,22 +26,23 @@ import time
 SIMULATION_MODE = False  # Set to True for testing without hardware
 # -------------------------------------------------------
 
-GPIO = None
+lgpio = None
 if not SIMULATION_MODE:
     try:
-        import RPi.GPIO as GPIO
+        import lgpio
     except ImportError:
-        GPIO = None
+        lgpio = None
         SIMULATION_MODE = True
-        print("⚠️  RPi.GPIO not found; forcing simulation mode")
+        print("⚠️  lgpio not found; forcing simulation mode")
+        print("Install with: sudo apt-get install python3-lgpio")
 
 from config import L298N_ENA, L298N_IN1, L298N_IN2
 
 
 class L298NMotorController:
     """
-    Controls a DC motor using L298N H-bridge driver.
-    Supports forward, reverse, stop, and speed control.
+    Controls a DC motor using L298N H-bridge driver on Raspberry Pi 5.
+    Supports forward, reverse, stop, and speed control using lgpio.
     """
 
     def __init__(self, ena_pin=None, in1_pin=None, in2_pin=None, pwm_frequency=1000):
@@ -58,23 +61,25 @@ class L298NMotorController:
         self.pwm_frequency = pwm_frequency
 
         self.is_running = False
-        self.current_direction = None  # "forward", "reverse", or None
-        self.current_speed = 0  # 0-100
-        self.pwm = None
+        self.current_direction = None
+        self.current_speed = 0
 
-        if not SIMULATION_MODE and GPIO is not None:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(self.ena_pin, GPIO.OUT)
-            GPIO.setup(self.in1_pin, GPIO.OUT)
-            GPIO.setup(self.in2_pin, GPIO.OUT)
+        self.chip = None
+        self.pwm_duty = 0
 
-            # Initialize PWM on enable pin
-            self.pwm = GPIO.PWM(self.ena_pin, self.pwm_frequency)
-            self.pwm.start(0)
+        if not SIMULATION_MODE and lgpio is not None:
+            # Open GPIO chip
+            self.chip = lgpio.gpiochip_open(4)  # Pi 5 uses gpiochip4
 
-            # Make sure motor is stopped
-            GPIO.output(self.in1_pin, GPIO.LOW)
-            GPIO.output(self.in2_pin, GPIO.LOW)
+            # Set pins as outputs
+            lgpio.gpio_claim_output(self.chip, self.ena_pin)
+            lgpio.gpio_claim_output(self.chip, self.in1_pin)
+            lgpio.gpio_claim_output(self.chip, self.in2_pin)
+
+            # Initialize all outputs to LOW
+            lgpio.gpio_write(self.chip, self.in1_pin, 0)
+            lgpio.gpio_write(self.chip, self.in2_pin, 0)
+            lgpio.gpio_write(self.chip, self.ena_pin, 0)
 
     # ------------------------------------------------------------------
     # Public API
@@ -118,11 +123,10 @@ class L298NMotorController:
             print("  [MOTOR] ⏹️  Motor STOPPED")
             return
 
-        if GPIO is not None:
-            GPIO.output(self.in1_pin, GPIO.LOW)
-            GPIO.output(self.in2_pin, GPIO.LOW)
-            if self.pwm is not None:
-                self.pwm.ChangeDutyCycle(0)
+        if self.chip is not None and lgpio is not None:
+            lgpio.gpio_write(self.chip, self.in1_pin, 0)
+            lgpio.gpio_write(self.chip, self.in2_pin, 0)
+            lgpio.gpio_write(self.chip, self.ena_pin, 0)
 
     def set_speed(self, speed):
         """
@@ -131,15 +135,19 @@ class L298NMotorController:
         Args:
             speed: Motor speed 0-100
         """
-        speed = max(0, min(100, speed))  # Clamp to 0-100
+        speed = max(0, min(100, speed))
         self.current_speed = speed
 
         if SIMULATION_MODE:
             print(f"  [MOTOR] 🔧 Speed set to {speed}%")
             return
 
-        if self.pwm is not None:
-            self.pwm.ChangeDutyCycle(speed)
+        if self.chip is not None and lgpio is not None:
+            # For simple on/off control (can be enhanced with PWM)
+            if speed > 0:
+                lgpio.gpio_write(self.chip, self.ena_pin, 1)
+            else:
+                lgpio.gpio_write(self.chip, self.ena_pin, 0)
 
     def brake(self):
         """
@@ -153,11 +161,10 @@ class L298NMotorController:
             print("  [MOTOR] 🛑 BRAKE applied")
             return
 
-        if GPIO is not None:
-            GPIO.output(self.in1_pin, GPIO.HIGH)
-            GPIO.output(self.in2_pin, GPIO.HIGH)
-            if self.pwm is not None:
-                self.pwm.ChangeDutyCycle(100)
+        if self.chip is not None and lgpio is not None:
+            lgpio.gpio_write(self.chip, self.in1_pin, 1)
+            lgpio.gpio_write(self.chip, self.in2_pin, 1)
+            lgpio.gpio_write(self.chip, self.ena_pin, 1)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -165,7 +172,7 @@ class L298NMotorController:
 
     def _set_direction(self, direction, speed):
         """Set motor direction and speed."""
-        speed = max(0, min(100, speed))  # Clamp to 0-100
+        speed = max(0, min(100, speed))
         self.is_running = True
         self.current_direction = direction
         self.current_speed = speed
@@ -175,16 +182,19 @@ class L298NMotorController:
             print(f"  [MOTOR] {arrow} Motor running {direction.upper()} at {speed}% speed")
             return
 
-        if GPIO is not None:
+        if self.chip is not None and lgpio is not None:
             if direction == "forward":
-                GPIO.output(self.in1_pin, GPIO.HIGH)
-                GPIO.output(self.in2_pin, GPIO.LOW)
+                lgpio.gpio_write(self.chip, self.in1_pin, 1)
+                lgpio.gpio_write(self.chip, self.in2_pin, 0)
             elif direction == "reverse":
-                GPIO.output(self.in1_pin, GPIO.LOW)
-                GPIO.output(self.in2_pin, GPIO.HIGH)
+                lgpio.gpio_write(self.chip, self.in1_pin, 0)
+                lgpio.gpio_write(self.chip, self.in2_pin, 1)
 
-            if self.pwm is not None:
-                self.pwm.ChangeDutyCycle(speed)
+            # Simple on/off speed control (enable pin)
+            if speed > 0:
+                lgpio.gpio_write(self.chip, self.ena_pin, 1)
+            else:
+                lgpio.gpio_write(self.chip, self.ena_pin, 0)
 
     # ------------------------------------------------------------------
     # Cleanup
@@ -194,10 +204,14 @@ class L298NMotorController:
         """Clean up GPIO resources."""
         self.stop()
 
-        if not SIMULATION_MODE and GPIO is not None:
-            if self.pwm is not None:
-                self.pwm.stop()
-            GPIO.cleanup([self.ena_pin, self.in1_pin, self.in2_pin])
+        if not SIMULATION_MODE and self.chip is not None and lgpio is not None:
+            try:
+                lgpio.gpio_write(self.chip, self.ena_pin, 0)
+                lgpio.gpio_write(self.chip, self.in1_pin, 0)
+                lgpio.gpio_write(self.chip, self.in2_pin, 0)
+                lgpio.gpiochip_close(self.chip)
+            except Exception as e:
+                print(f"Cleanup error: {e}")
 
 
 class DrainValveMotor:

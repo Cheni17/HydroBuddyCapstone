@@ -25,6 +25,7 @@ DRAIN_MOSFET_PIN = 25
 
 # L298N Motor Controller (for drain valve motor)
 USE_MOTOR_CONTROLLER = False  # Set True to use L298N motor, False for MOSFET
+RASPBERRY_PI_5 = True  # Set True for Pi 5 (uses lgpio), False for Pi 4/3/2/Zero (uses RPi.GPIO)
 L298N_ENA = 13      # PWM pin for motor A speed control
 L298N_IN1 = 19      # Motor A direction pin 1
 L298N_IN2 = 26      # Motor A direction pin 2
