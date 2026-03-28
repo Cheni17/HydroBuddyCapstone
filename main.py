@@ -13,6 +13,8 @@ danger confidence from all sensors. The state machine acts on that score.
 """
 
 import time
+import sys
+import select
 from config import *
 from sensors.detection import DrownDetector, SensorSnapshot
 from actuators.alarm import Alarm
@@ -20,6 +22,24 @@ from actuators.drain import DrainController
 
 # Import standalone sensor functions
 from sensors.distance import init_tof, read_tof, read_ultrasonic
+
+# Platform-specific keyboard input handling
+if sys.platform == 'win32':
+    import msvcrt
+    def check_for_enter():
+        """Check if Enter key was pressed (non-blocking, Windows)."""
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key in (b'\r', b'\n'):  # Enter key
+                return True
+        return False
+else:
+    def check_for_enter():
+        """Check if Enter key was pressed (non-blocking, Unix/Linux)."""
+        if select.select([sys.stdin], [], [], 0)[0]:
+            line = sys.stdin.readline()
+            return True
+        return False
 
 
 class HydroBuddyStateMachine:
@@ -53,6 +73,10 @@ class HydroBuddyStateMachine:
         print(f"  • ToF head visible: < {TOF_UPRIGHT_THRESHOLD}cm")
         print(f"  • Alert at: {15}s submersion")
         print(f"  • Critical at: {30}s submersion")
+        print(f"\nEMERGENCY CONTROLS:")
+        print(f"  • Press ENTER during emergency to manually reset")
+        print(f"  • Manual reset will: stop alarm, close drain, resume monitoring")
+        print(f"  • Press Ctrl+C to shutdown system")
         print("\n" + "=" * 70)
 
         # Calibrate on startup — measure empty tub distance
@@ -283,7 +307,7 @@ class HydroBuddyStateMachine:
     def handle_emergency(self):
         """
         EMERGENCY — latched state, alarm + drain active.
-        Requires manual reset to return to monitoring.
+        Press ENTER to manually reset and retract actuator.
         """
         if not self.emergency_latched:
             print("\n" + "🚨" * 25)
@@ -298,10 +322,15 @@ class HydroBuddyStateMachine:
             print("   3. Latching emergency state...")
             print("\n🔒 EMERGENCY STATE LATCHED")
             print("   System will remain in emergency mode")
-            print("   ⚠️  Manual reset required to exit")
-            print("   ⚠️  Call machine.manual_reset() to reset")
+            print("   ⚠️  Press ENTER to manually reset and retract actuator")
             print("=" * 50)
-            print("\nEmergency active", end="", flush=True)
+            print("\nEmergency active (press ENTER to reset)", end="", flush=True)
+
+        # Check for Enter key press to trigger manual reset
+        if check_for_enter():
+            print("\n\n⌨️  ENTER key detected - initiating manual reset...")
+            self.manual_reset()
+            return
 
         print(".", end="", flush=True)
 
@@ -312,13 +341,33 @@ class HydroBuddyStateMachine:
     def manual_reset(self):
         """Call this to exit emergency state after situation is resolved."""
         if self.emergency_latched:
-            print("\n\n🔓 MANUAL RESET INITIATED")
+            print("\n" + "=" * 70)
+            print("🔓 MANUAL RESET INITIATED")
+            print("=" * 70)
+            print("\n📋 Performing emergency shutdown sequence:")
+            print("   1. Stopping alarm...")
             self.alarm.off()
+            print("      ✓ Alarm stopped")
+
+            print("   2. Closing drain valve (retracting actuator)...")
             self.drain.close_drain()
+            print("      ✓ Drain valve closed")
+
+            print("   3. Unlocking emergency state...")
             self.emergency_latched = False
+            print("      ✓ Emergency state unlocked")
+
+            print("   4. Resetting detector...")
             self.detector.reset()
+            print("      ✓ Detector reset")
+
+            print("   5. Returning to monitoring mode...")
             self.state = "MONITORING"
-            print("✓ System reset — returning to MONITORING\n")
+            print("      ✓ State changed to MONITORING")
+
+            print("\n" + "=" * 70)
+            print("✅ SYSTEM RESET COMPLETE - Monitoring resumed")
+            print("=" * 70 + "\n")
 
     def cleanup(self):
         print("Cleaning up resources...")

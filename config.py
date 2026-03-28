@@ -24,7 +24,7 @@ LED_PIN = 18
 DRAIN_MOSFET_PIN = 25
 
 # L298N Motor Controller (for drain valve motor)
-USE_MOTOR_CONTROLLER = False  # Set True to use L298N motor, False for MOSFET
+USE_MOTOR_CONTROLLER = True  # CHANGED: True = L298N motor (matches test_motor_pi5.py)
 RASPBERRY_PI_5 = True  # Set True for Pi 5 (uses lgpio), False for Pi 4/3/2/Zero (uses RPi.GPIO)
 L298N_ENA = 13      # PWM pin for motor A speed control
 L298N_IN1 = 19      # Motor A direction pin 1
@@ -34,9 +34,11 @@ L298N_IN3 = 20      # Motor B direction pin 1 (if using second motor)
 L298N_IN4 = 21      # Motor B direction pin 2 (if using second motor)
 
 # Motor drain valve timing
+# These values match test_motor_pi5.py for consistent behavior
+# Calibrate with: python calibration/test_motor_pi5.py
 VALVE_OPEN_DURATION = 3.0   # Seconds to fully open valve
 VALVE_CLOSE_DURATION = 3.0  # Seconds to fully close valve
-VALVE_MOTOR_SPEED = 80      # Motor speed percentage (0-100)
+VALVE_MOTOR_SPEED = 100     # Motor speed percentage (100 = full speed)
 
 
 # ============================================

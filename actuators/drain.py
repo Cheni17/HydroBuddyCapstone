@@ -20,7 +20,8 @@ Simulation Mode:
 import time
 
 # -------------------------------------------------------
-SIMULATION_MODE = True
+# Toggle this to switch between real hardware and simulation
+SIMULATION_MODE = False  # Set to True for testing without hardware
 # -------------------------------------------------------
 
 if not SIMULATION_MODE:
