@@ -61,6 +61,7 @@ class DangerAssessment:
     submersion_duration: float        # seconds
     indicators:          list         # list of active danger indicators
     recommendation:      str          # what the state machine should do
+    person_present:      bool = False # True if person detected in tub
 
 
 class DrownDetector:
@@ -124,7 +125,8 @@ class DrownDetector:
             return DangerAssessment(
                 confidence=0.0, danger_level="SAFE",
                 submerged=False, submersion_duration=0.0,
-                indicators=[], recommendation="MONITOR"
+                indicators=[], recommendation="MONITOR",
+                person_present=snapshot.person_present
             )
 
         # --- Submersion detection ---
@@ -166,6 +168,7 @@ class DrownDetector:
             submersion_duration=round(submersion_duration, 1),
             indicators=indicators,
             recommendation=recommendation,
+            person_present=snapshot.person_present,
         )
 
     def reset(self):
