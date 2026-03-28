@@ -106,19 +106,17 @@ class DrownDetector:
         if snapshot.distance_cm is not None:
             self._distance_history.append(snapshot.distance_cm)
 
-        # --- Immediate emergency condition ---
-        # If ultrasonic sees an object in water and ToF reports SUBMERGED,
-        # this is a strong drowning signal and escalates immediately.
+        # --- Drowning detection ---
+        # If ultrasonic detects person in water AND ToF shows SUBMERGED,
+        # start counting submersion time (don't immediately escalate)
         if snapshot.water_present and snapshot.tof_state == "SUBMERGED":
-            self._submersion_start = self._submersion_start or time.time()
-            return DangerAssessment(
-                confidence=1.0,
-                danger_level="CRITICAL",
-                submerged=True,
-                submersion_duration=0.0,
-                indicators=["WATER + SUBMERGED detected"],
-                recommendation="EMERGENCY"
-            )
+            # Start the submersion timer if not already started
+            if self._submersion_start is None:
+                self._submersion_start = time.time()
+            # Continue to normal assessment below (will count up submersion time)
+        elif snapshot.tof_state == "UPRIGHT":
+            # Person's head is visible - reset submersion timer
+            self._reset_submersion()
 
         # --- Early exits for clearly safe states ---
         if not snapshot.water_present or not snapshot.person_present:
@@ -201,8 +199,12 @@ class DrownDetector:
         if submerged:
             if self._submersion_start is None:
                 self._submersion_start = time.time()
-            return time.time() - self._submersion_start
+                print("  ⏱️  TIMER STARTED (submersion detected)")
+            duration = time.time() - self._submersion_start
+            return duration
         else:
+            if self._submersion_start is not None:
+                print("  ⏱️  TIMER RESET (person resurfaced or no longer detected)")
             self._reset_submersion()
             return 0.0
 

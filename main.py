@@ -40,8 +40,20 @@ class HydroBuddyStateMachine:
         self.emergency_latched = False
 
     def run(self):
-        print("🌊 HydroBuddy Started - Monitoring bathtub safety...")
-        print("=" * 50)
+        print("\n" + "=" * 70)
+        print("🌊 HydroBuddy - Drowning Detection System")
+        print("=" * 70)
+        print("\nDETECTION LOGIC:")
+        print("  • Ultrasonic sensor → Detects person IN the water")
+        print("  • ToF sensor → Detects if head is ABOVE water")
+        print("  • UPRIGHT = Body in water + Head visible")
+        print("  • SUBMERGED = Body in water + Head NOT visible")
+        print(f"\nTHRESHOLDS:")
+        print(f"  • Ultrasonic detection: < {ULTRASONIC_OBJECT_THRESHOLD}cm")
+        print(f"  • ToF head visible: < {TOF_UPRIGHT_THRESHOLD}cm")
+        print(f"  • Alert at: {15}s submersion")
+        print(f"  • Critical at: {30}s submersion")
+        print("\n" + "=" * 70)
 
         # Calibrate on startup — measure empty tub distance
         self._calibrate()
@@ -53,6 +65,18 @@ class HydroBuddyStateMachine:
 
                 # 2. Run detection engine
                 assessment = self.detector.update(snapshot)
+
+                # Print assessment results
+                print(f"\n📊 ASSESSMENT:")
+                print(f"  Submerged:      {assessment.submerged}")
+                print(f"  Duration:       {assessment.submersion_duration:.1f}s")
+                print(f"  Confidence:     {assessment.confidence:.0%}")
+                print(f"  Danger Level:   {assessment.danger_level}")
+                print(f"  Recommendation: {assessment.recommendation}")
+                if assessment.indicators:
+                    print(f"  Indicators:     {', '.join(assessment.indicators)}")
+
+                print(f"\n🔄 STATE: {self.state}")
 
                 # 3. State machine acts on assessment
                 if self.state == "MONITORING":
@@ -88,22 +112,54 @@ class HydroBuddyStateMachine:
             print("⚠️  Calibration failed — using default thresholds")
 
     def _read_sensors(self) -> SensorSnapshot:
-        """Read ToF + ultrasonic and return a unified snapshot."""
+        """
+        Read ToF + ultrasonic and return a unified snapshot.
+
+        Detection Logic:
+        1. Ultrasonic (pointing at water) detects if person/body is in the tub
+        2. ToF (pointing horizontally) detects if head/torso is above water
+        3. If body detected BUT no head visible = SUBMERGED (danger!)
+        """
+        print("\n" + "-" * 50)
+        print("📡 SENSOR READINGS:")
+
+        # Step 1: Check if there's a person in the water (ultrasonic)
+        ultrasonic_distance = read_ultrasonic()
+        person_in_water = ultrasonic_distance is not None and ultrasonic_distance < ULTRASONIC_OBJECT_THRESHOLD
+
+        print(f"  Ultrasonic: {ultrasonic_distance if ultrasonic_distance else '--'}cm", end="")
+        if person_in_water:
+            print(f" → ✓ PERSON IN WATER (< {ULTRASONIC_OBJECT_THRESHOLD}cm threshold)")
+        else:
+            print(f" → Empty tub (>= {ULTRASONIC_OBJECT_THRESHOLD}cm or no reading)")
+
+        # Step 2: If person detected, check if head is above water (ToF)
         tof_distance = read_tof(self.tof_sensor)
         tof_state = "UNKNOWN"
-        if tof_distance is not None:
-            tof_state = "UPRIGHT" if tof_distance < TOF_UPRIGHT_THRESHOLD else "SUBMERGED"
 
-        ultrasonic_distance = read_ultrasonic()
-        water_present = ultrasonic_distance is not None and ultrasonic_distance < ULTRASONIC_OBJECT_THRESHOLD
-        person_present = water_present or (tof_distance is not None and tof_distance < PERSON_PRESENCE_DISTANCE)
+        print(f"  ToF:        {tof_distance if tof_distance else '--'}cm", end="")
+
+        if person_in_water:
+            # Person is in the water - now check head position with ToF
+            if tof_distance is not None and tof_distance < TOF_UPRIGHT_THRESHOLD:
+                tof_state = "UPRIGHT"  # Head/torso visible above water
+                print(f" → ✓ HEAD VISIBLE (< {TOF_UPRIGHT_THRESHOLD}cm) - UPRIGHT")
+            else:
+                tof_state = "SUBMERGED"  # Head not visible - person underwater!
+                print(f" → ⚠️  NO HEAD DETECTED (>= {TOF_UPRIGHT_THRESHOLD}cm) - SUBMERGED!")
+        else:
+            # No person in water - ToF state doesn't matter
+            tof_state = "UNKNOWN"
+            print(f" → (not evaluated - no person detected)")
+
+        print(f"\n🔍 DETECTION RESULT: {tof_state}")
 
         return SensorSnapshot(
             timestamp      = time.time(),
             distance_cm    = tof_distance,
             tof_state      = tof_state,
-            water_present  = water_present,
-            person_present = person_present,
+            water_present  = person_in_water,  # True if ultrasonic detects body
+            person_present = person_in_water,  # True if ultrasonic detects body
         )
 
     # ------------------------------------------------------------------
@@ -115,14 +171,29 @@ class HydroBuddyStateMachine:
         MONITORING — watch for water + person.
         Transition to TIMING when detection engine says to start timing.
         """
+        print("\n" + "=" * 50)
+        print("⚙️  MONITORING STATE HANDLER")
+        print("=" * 50)
+
+        # Print current sensor status (helpful for debugging)
+        if assessment.person_present:
+            status = "UPRIGHT ✓" if not assessment.submerged else "SUBMERGED ⚠️"
+            print(f"Status: Person in water - {status}")
+        else:
+            print("Status: No person detected - tub empty")
+
         if not assessment.submerged:
+            print("Action: Continue monitoring (no danger)")
             return
 
         if assessment.recommendation in ("TIME", "VERIFY", "EMERGENCY"):
-            print("⚠️  Person detected below water surface!")
+            print("\n🚨 SUBMERSION DETECTED!")
+            print(f"   Person is underwater")
             print(f"   Confidence: {assessment.confidence:.0%}")
-            print("→ Transitioning to TIMING state")
+            print(f"\n→→→ STATE TRANSITION: MONITORING → TIMING")
             self.state = "TIMING"
+        else:
+            print("Action: Submerged but confidence too low - continue monitoring")
 
     def handle_timing(self, assessment):
         """
@@ -132,55 +203,82 @@ class HydroBuddyStateMachine:
         duration   = assessment.submersion_duration
         confidence = assessment.confidence
 
+        print("\n" + "=" * 50)
+        print("⚙️  TIMING STATE HANDLER")
+        print("=" * 50)
+
         # Person resurfaced
         if not assessment.submerged:
-            print("✓ Person resurfaced - returning to MONITORING")
+            print("✅ PERSON RESURFACED!")
+            print("   Head is now visible above water")
+            print("   Timer reset to 0")
+            print(f"\n→→→ STATE TRANSITION: TIMING → MONITORING")
             self.detector.reset()
             self.state = "MONITORING"
             return
 
-        print(f"⏱️  Submerged: {duration:.1f}s  |  Confidence: {confidence:.0%}  |  {', '.join(assessment.indicators) or 'monitoring'}")
+        # Still submerged - show timer
+        print(f"⏱️  SUBMERSION TIMER: {duration:.1f}s")
+        print(f"   Confidence: {confidence:.0%}")
+        print(f"   Indicators: {', '.join(assessment.indicators) or 'monitoring'}")
+
+        # Show thresholds
+        from sensors.detection import SUBMERSION_ALERT_TIME, SUBMERSION_CRITICAL_TIME
+        print(f"   Threshold: {SUBMERSION_ALERT_TIME}s → VERIFICATION, {SUBMERSION_CRITICAL_TIME}s → EMERGENCY")
 
         # Escalate based on recommendation from detection engine
         if assessment.recommendation == "EMERGENCY":
-            print("🚨 CRITICAL submersion time — skipping to EMERGENCY")
+            print(f"\n🚨 CRITICAL! Submerged for {duration:.1f}s (>= {SUBMERSION_CRITICAL_TIME}s)")
+            print(f"→→→ STATE TRANSITION: TIMING → EMERGENCY (skipping verification)")
             self.state = "EMERGENCY"
         elif assessment.recommendation == "VERIFY":
-            print("🚨 Danger threshold reached!")
-            print("→ Transitioning to VERIFICATION state")
+            print(f"\n⚠️  ALERT! Submerged for {duration:.1f}s (>= {SUBMERSION_ALERT_TIME}s)")
+            print(f"→→→ STATE TRANSITION: TIMING → VERIFICATION")
             self.state = "VERIFICATION"
+        else:
+            print(f"   Action: Continue timing (< {SUBMERSION_ALERT_TIME}s threshold)")
 
     def handle_verification(self, assessment):
         """
         VERIFICATION — final multi-sensor confirmation before emergency.
         Print what each sensor is seeing and check for drowning signature.
         """
-        print("🔍 VERIFICATION: Checking for drowning signature...")
+        print("\n" + "=" * 50)
+        print("⚙️  VERIFICATION STATE HANDLER")
+        print("=" * 50)
+        print("🔍 Final check before emergency activation...")
+        print(f"   Submersion duration: {assessment.submersion_duration:.1f}s")
         print(f"   Confidence score: {assessment.confidence:.0%}")
+        print(f"   Danger level: {assessment.danger_level}")
 
-        for indicator in assessment.indicators:
-            print(f"   ⚠️  {indicator}")
-
-        if not assessment.indicators:
+        if assessment.indicators:
+            print(f"   Danger indicators:")
+            for indicator in assessment.indicators:
+                print(f"     ⚠️  {indicator}")
+        else:
             print("   ✋ No danger indicators active")
 
         # Person resurfaced during verification — false alarm
         if not assessment.submerged:
-            print("✓ FALSE ALARM: Person resurfaced during verification")
-            print("→ Returning to MONITORING state")
+            print("\n✅ FALSE ALARM!")
+            print("   Person resurfaced during verification")
+            print("   Head is now visible above water")
+            print(f"\n→→→ STATE TRANSITION: VERIFICATION → MONITORING")
             self.detector.reset()
             self.state = "MONITORING"
             return
 
         # Confidence high enough to confirm drowning
         if assessment.recommendation in ("VERIFY", "EMERGENCY"):
-            print("\n" + "=" * 50)
-            print("🚨🚨🚨 DROWNING SIGNATURE CONFIRMED! 🚨🚨🚨")
-            print("=" * 50)
+            print("\n" + "🚨" * 25)
+            print("🚨 DROWNING SIGNATURE CONFIRMED!")
+            print("🚨 Activating emergency response...")
+            print("🚨" * 25)
+            print(f"\n→→→ STATE TRANSITION: VERIFICATION → EMERGENCY")
             self.state = "EMERGENCY"
         else:
-            print("  ℹ️  Insufficient confidence — continuing verification...")
-            time.sleep(1)
+            print(f"\n   ℹ️  Confidence below emergency threshold")
+            print(f"   Action: Continue verification...")
 
     def handle_emergency(self):
         """
@@ -188,15 +286,22 @@ class HydroBuddyStateMachine:
         Requires manual reset to return to monitoring.
         """
         if not self.emergency_latched:
-            print("\n" + "🚨" * 20)
-            print("EMERGENCY STATE ACTIVATED")
-            print("🚨" * 20 + "\n")
+            print("\n" + "🚨" * 25)
+            print("⚙️  EMERGENCY STATE HANDLER")
+            print("🚨" * 25)
+            print("\n🚨 ACTIVATING EMERGENCY RESPONSE:")
+            print("   1. Sounding alarm...")
             self.alarm.trigger_alarm()
+            print("   2. Opening drain valve...")
             self.drain.open_drain()
             self.emergency_latched = True
+            print("   3. Latching emergency state...")
             print("\n🔒 EMERGENCY STATE LATCHED")
-            print("⚠️  Manual reset required")
+            print("   System will remain in emergency mode")
+            print("   ⚠️  Manual reset required to exit")
+            print("   ⚠️  Call machine.manual_reset() to reset")
             print("=" * 50)
+            print("\nEmergency active", end="", flush=True)
 
         print(".", end="", flush=True)
 
