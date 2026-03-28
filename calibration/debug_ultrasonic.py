@@ -24,7 +24,7 @@ except ImportError:
     print("Or: pip3 install pyserial")
 
 # UART Configuration
-UART_PORT = "/dev/ttyAMA0"
+UART_PORT = "/dev/ttyAMA10"
 BAUD_RATE = 9600
 TIMEOUT = 1.0
 

@@ -299,7 +299,7 @@ def read_tof(sensor):
         sensor.clear_interrupt()
         if raw_mm is None:
             return None
-        return round(raw_mm / 10.0, 1)
+        return round(raw_mm, 1)
     except Exception as e:
         print(f"ToF read error: {e}")
         return None

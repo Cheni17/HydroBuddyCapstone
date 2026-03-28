@@ -25,7 +25,7 @@ from sensors.distance import init_tof, read_tof, read_ultrasonic
 # Test configuration (thresholds for display only)
 # ----------------------------------------------------------------------------------
 ULTRASONIC_WATER_THRESHOLD = 10.0
-ULTRASONIC_PRESENCE_THRESHOLD = 30.0
+ULTRASONIC_PRESENCE_THRESHOLD = 40.0
 SAMPLE_INTERVAL = 0.5
 ROLLING_WINDOW = 10
 TOF_UPRIGHT_THRESH = 40.0

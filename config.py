@@ -9,8 +9,8 @@ Pin numbers, Thresholds, and Timeouts for HydroBuddy
 
 # Distance Sensors
 TOF_SENSOR_PIN = 17
-ULTRASONIC_TRIGGER_PIN = 23
-ULTRASONIC_ECHO_PIN = 24
+ULTRASONIC_TRIGGER_PIN = 15
+ULTRASONIC_ECHO_PIN = 14
 
 # Audio Sensor
 MICROPHONE_PIN = 27
