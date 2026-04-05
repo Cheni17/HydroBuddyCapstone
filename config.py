@@ -42,6 +42,14 @@ VALVE_MOTOR_SPEED = 100     # Motor speed percentage (100 = full speed)
 
 
 # ============================================
+# ULTRASONIC SENSOR MODE
+# ============================================
+
+# Toggle between air and underwater operation
+ULTRASONIC_UNDERWATER_MODE = False  # Set True for underwater, False for air operation
+
+
+# ============================================
 # SENSOR THRESHOLDS
 # ============================================
 

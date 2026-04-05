@@ -52,6 +52,7 @@ from config import (
     TOF_UPRIGHT_THRESHOLD,
     ULTRASONIC_UART_PORT,
     ULTRASONIC_BAUD_RATE,
+    ULTRASONIC_UNDERWATER_MODE,
 )
 
 
@@ -201,7 +202,15 @@ class DistanceSensor:
                 return None
 
         pulse_duration = pulse_end - pulse_start
-        distance = pulse_duration * 17150  # speed of sound / 2
+        
+        # Calculate distance based on sensor medium
+        # Air: speed of sound = 343 m/s → constant = 17150
+        # Water: speed of sound = 1480 m/s → constant = 74000
+        if ULTRASONIC_UNDERWATER_MODE:
+            distance = pulse_duration * 74000  # Underwater mode
+        else:
+            distance = pulse_duration * 17150  # Air mode
+        
         return round(distance, 2)
 
     def _read_tof(self) -> float:
